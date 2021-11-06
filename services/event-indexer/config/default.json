@@ -1,0 +1,5 @@
+{
+  "port": 3001,
+  "access-control-allow-origin-url": "*",
+  "source-node-ip": "127.0.0.1"
+}
