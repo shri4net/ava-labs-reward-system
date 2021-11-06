@@ -5,6 +5,7 @@ package eventtokenizervm
 
 import (
 	//"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 
@@ -12,7 +13,7 @@ import (
 	//"github.com/ava-labs/avalanchego/vms/platformvm"
 )
 
-// StaticService defines the base service for the timestamp vm
+// StaticService defines the base service for the eventtokenizer vm
 type StaticService struct{}
 
 // CreateStaticService ...
@@ -63,8 +64,10 @@ type DecodeArgs struct {
 
 // DecodeReply is the reply from Decode
 type DecodeReply struct {
-	Data     string              `json:"data"`
-	Encoding formatting.Encoding `json:"encoding"`
+	Data       string              `json:"data"`
+	DataLength int                 `json:"datalength"`
+	DataHex    string              `json:"datahex"`
+	Encoding   formatting.Encoding `json:"encoding"`
 }
 
 // Decode returns the Decoded data
@@ -74,6 +77,8 @@ func (ss *StaticService) Decode(_ *http.Request, args *DecodeArgs, reply *Decode
 		return fmt.Errorf("couldn't Decode data as string: %s", err)
 	}
 	reply.Data = string(bytes)
+	reply.DataLength = len(bytes)
+	reply.DataHex = hex.EncodeToString(bytes) // formatting.EncodeWithoutChecksum(formatting.Hex, bytes)
 	reply.Encoding = args.Encoding
 	return nil
 }

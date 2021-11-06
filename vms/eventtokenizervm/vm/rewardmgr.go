@@ -25,8 +25,7 @@ type staking_data struct {
 	end_time               string
 	uptime                 float32
 	pollticks              uint16
-	// TODO : add fields for rewards
-	//reward_node_id
+	reward_amount          uint64
 }
 
 func (sd *staking_data) ModifyUptime(ut float32) {
@@ -50,26 +49,26 @@ type RewardMgr struct {
 	subnet_id               ids.ID
 }
 
-const (
-	localRpcUri = "http://199.192.25.252:9650"
-)
-
-///
+//
 func (m *RewardMgr) Initialize(vm *VM, config Config) {
-	log.Info("TimestampVM: Mempool initializing v.0.1")
+	log.Info("Rewardmgr: Initializing v.0.1")
 
 	m.vm = vm
 	m.config = config
-	sid, err := ids.FromString(config.SubnetIDStr)
-	if err != nil {
-		log.Error(fmt.Sprintf("TimestampVM: Error in GetCurrentValidators: %v", err))
-		return
-	}
-	m.subnet_id = sid
+	m.subnet_id = m.vm.ctx.SubnetID
 
+	log.Info(fmt.Sprintf("Rewardmgr: Polling interval: %s", m.config.PollingDuration))
+
+	this_NodeID := fmt.Sprintf("NodeID-%s", m.vm.ctx.NodeID.String())
+	log.Info(fmt.Sprintf("Rewardmgr: This Node-ID : %s , Master-Node-id : %s", this_NodeID, m.config.MasterNodeID))
+
+	if this_NodeID == m.config.MasterNodeID {
+		log.Info(fmt.Sprintf("Rewardmgr: This node %s is the Master Node-id for rewards", this_NodeID))
+	} else {
+		log.Info(fmt.Sprintf("Rewardmgr: This node %s is NOT the Master Node-id for rewards", this_NodeID))
+	}
 	m.subnet_validating_nodes = make(map[string]staking_data)
 
-	log.Info(fmt.Sprintf("Polling interval: %s", m.config.PollingDuration))
 	m.timerCount = 0
 	ticker := time.NewTicker(m.config.PollingDuration)
 	done := make(chan bool)
@@ -81,7 +80,7 @@ func (m *RewardMgr) Initialize(vm *VM, config Config) {
 				return
 			case <-ticker.C:
 				m.timerCount++
-				log.Info(fmt.Sprintf("TimestampVM: ticker.C triggered %d", m.timerCount))
+				log.Info(fmt.Sprintf("Rewardmgr: polling ticker triggered %d", m.timerCount))
 
 				latest_subnet_validating_nodes := m.GetCurrentSubnetValidators(m.subnet_id)
 
@@ -91,7 +90,7 @@ func (m *RewardMgr) Initialize(vm *VM, config Config) {
 					_, prs := m.subnet_validating_nodes[l_svn.node_id]
 					if !prs {
 						nodes_to_be_added[l_svn.node_id] = staking_data{node_id: l_svn.node_id}
-						log.Info(fmt.Sprintf("Subnet Validator Nodes - Newly Added: %s", l_svn.node_id))
+						log.Info(fmt.Sprintf("Rewardmgr: Subnet Validator Nodes - Newly Added: %s", l_svn.node_id))
 					}
 				}
 
@@ -100,8 +99,10 @@ func (m *RewardMgr) Initialize(vm *VM, config Config) {
 				for _, svn := range m.subnet_validating_nodes {
 					_, prs := latest_subnet_validating_nodes[svn.node_id]
 					if !prs {
-						nodes_to_be_rewarded_and_removed[svn.node_id] = staking_data{node_id: svn.node_id}
-						log.Info(fmt.Sprintf("Subnet Validator Nodes - To be Rewarded & Removed: %s", svn.node_id))
+						//  nodes_to_be_rewarded_and_removed[svn.node_id] = staking_data{node_id: svn.node_id}
+						log.Info(fmt.Sprintf("Rewardmgr: Subnet Validator Nodes - To be Rewarded & Removed: %s", svn.node_id))
+						sd := staking_data{node_id: svn.node_id, reward_address: svn.reward_address, primary_staking_amount: svn.primary_staking_amount, uptime: svn.uptime}
+						nodes_to_be_rewarded_and_removed[svn.node_id] = sd
 					}
 				}
 
@@ -115,7 +116,7 @@ func (m *RewardMgr) Initialize(vm *VM, config Config) {
 					_, prs := m.subnet_validating_nodes[pvn.node_id]
 					if prs {
 						if m.subnet_validating_nodes[pvn.node_id].node_id != pvn.node_id {
-							log.Error(fmt.Sprintf("Something wrong with node_id record! %s", m.subnet_validating_nodes[pvn.node_id].node_id))
+							log.Error(fmt.Sprintf("Rewardmgr: Something wrong with node_id record! %s", m.subnet_validating_nodes[pvn.node_id].node_id))
 							continue
 						}
 
@@ -126,52 +127,58 @@ func (m *RewardMgr) Initialize(vm *VM, config Config) {
 							// Update the records
 							sd := staking_data{node_id: pvn.node_id, reward_address: pvn.reward_address, primary_staking_amount: pvn.primary_staking_amount, uptime: pvn.uptime}
 							m.subnet_validating_nodes[pvn.node_id] = sd
-							log.Info(fmt.Sprintf("Updated records for %s from primary network", pvn.node_id))
-							log.Info(fmt.Sprintf("Updated records %s", pvn.reward_address))
+							log.Info(fmt.Sprintf("Rewardmgr: Updated records for %s from primary network", pvn.node_id))
+							log.Info(fmt.Sprintf("Rewardmgr: Updated records %s", pvn.reward_address))
 
-							// Update the reward records
-							if len(nodes_to_be_rewarded_and_removed) > 0 {
-								nodes_to_be_rewarded_and_removed[pvn.node_id] = sd
-								log.Info(fmt.Sprintf("Updated reward records for %s from primary network", pvn.node_id))
-							}
 						}
 					}
 				}
 
-				this_NodeID := fmt.Sprintf("NodeID-%s", m.vm.ctx.NodeID.String())
-				log.Info(fmt.Sprintf("This Node-ID %s, Master-Node-id %s", this_NodeID, m.config.MasterNodeID))
-
 				// Reward every polling interval
-				if this_NodeID == m.config.MasterNodeID {
-					for _, n := range m.subnet_validating_nodes {
-						if len(n.reward_address) > 0 {
-							rewardaddr := n.reward_address[0]
-							if rewardaddr[0:2] == "P-" {
-								rewardaddr = "X-" + rewardaddr[2:]
-							}
-							m.SendRewards(rewardaddr, m.CalculateReward())
-						} else {
-							log.Warn(fmt.Sprintf("No address found for rewards: %s", n.node_id))
+				for _, n := range m.subnet_validating_nodes {
+					if len(n.reward_address) > 0 {
+						rewardaddr := n.reward_address[0]
+						if rewardaddr[0:2] == "P-" {
+							rewardaddr = "X-" + rewardaddr[2:]
 						}
+						if m.config.RewardDisbursal == "end" {
+						    updatedRewardAmount := m.subnet_validating_nodes[n.node_id].reward_amount + m.CalculateReward()
+						    log.Debug(fmt.Sprintf("Rewardmgr: updatedRewardAmount : %d for %s", updatedRewardAmount, n.node_id))
+						    sd := staking_data{node_id: n.node_id, reward_address: n.reward_address, primary_staking_amount: n.primary_staking_amount, uptime: n.uptime, reward_amount: updatedRewardAmount}
+						    m.subnet_validating_nodes[n.node_id] = sd
+						} else if m.config.RewardDisbursal == "periodic" {
+							if this_NodeID == m.config.MasterNodeID {
+								m.SendRewards(rewardaddr, m.CalculateReward())
+								// TODO : check if the SendRewards is successful and then loop for sending next rewards
+								// workaround of sleep so that last transaction is not duplicated 
+								time.Sleep(5 * time.Second)
+							} else {
+								log.Debug(fmt.Sprintf("Rewardmgr: This node %s is NOT the Master Node-id for rewards", this_NodeID))
+							}
+						}
+					} else {
+						log.Warn(fmt.Sprintf("Rewardmgr: periodic : No address found for rewards: %s", n.node_id))
 					}
-				} else {
-					log.Warn(fmt.Sprintf("This node %s is NOT the Master Node-id for rewards", this_NodeID))
 				}
 
 				// Reward & Remove the finished nodes
 				for _, n := range nodes_to_be_rewarded_and_removed {
-					if this_NodeID == m.config.MasterNodeID {
-						if len(n.reward_address) > 0 {
-							rewardaddr := n.reward_address[0]
-							if rewardaddr[0:2] == "P-" {
-								rewardaddr = "X-" + rewardaddr[2:]
+					if len(n.reward_address) > 0 {
+						rewardaddr := n.reward_address[0]
+						if rewardaddr[0:2] == "P-" {
+							rewardaddr = "X-" + rewardaddr[2:]
+						}
+						if m.config.RewardDisbursal == "end" {
+							if this_NodeID == m.config.MasterNodeID {
+								endRewardAmount := m.subnet_validating_nodes[n.node_id].reward_amount
+						                log.Debug(fmt.Sprintf("Rewardmgr: endRewardAmount : %d", endRewardAmount))
+								m.SendRewards(rewardaddr, endRewardAmount)
+							} else {
+								log.Debug(fmt.Sprintf("Rewardmgr: This node %s is NOT the Master Node-id for rewards", this_NodeID))
 							}
-							m.SendRewards(rewardaddr, m.CalculateReward())
-						} else {
-							log.Warn(fmt.Sprintf("No address found for rewards: %s", n.node_id))
 						}
 					} else {
-						log.Warn(fmt.Sprintf("This node %s is NOT the Master Node-id for rewards", this_NodeID))
+						log.Warn(fmt.Sprintf("Rewardmgr: end : No address found for rewards: %s", n.node_id))
 					}
 					delete(m.subnet_validating_nodes, n.node_id)
 				}
@@ -181,14 +188,15 @@ func (m *RewardMgr) Initialize(vm *VM, config Config) {
 	}()
 }
 
-///
+//
 func (m *RewardMgr) GetCurrentValidators(networkid ids.ID) map[string]staking_data {
-	log.Info(fmt.Sprintf("TimestampVM: GetCurrentValidators: %v", networkid))
+	log.Debug(fmt.Sprintf("Rewardmgr: GetCurrentValidators: %v", networkid))
 
-	pclient := platformvm.NewClient(localRpcUri, time.Minute)
-	currentValidators, err := pclient.GetCurrentValidators(networkid)
+	pclient := platformvm.NewClient(m.config.LocalRpcUri, time.Minute)
+	nodeIDs := []ids.ShortID{}
+	currentValidators, err := pclient.GetCurrentValidators(networkid, nodeIDs)
 	if err != nil {
-		log.Error(fmt.Sprintf("TimestampVM: Error in GetCurrentValidators: %v", err))
+		log.Error(fmt.Sprintf("Rewardmgr: Error in GetCurrentValidators: %v", err))
 		return nil
 	}
 
@@ -220,18 +228,19 @@ func (m *RewardMgr) GetCurrentValidators(networkid ids.ID) map[string]staking_da
 		validating_nodes[validator.NodeID] = sd
 	}
 
-	log.Info(fmt.Sprintf("Primary Network Node Count: %d", len(validating_nodes)))
+	log.Debug(fmt.Sprintf("Rewardmgr: Primary Network Node Count: %d", len(validating_nodes)))
 	return validating_nodes
 }
 
 //
 func (m *RewardMgr) GetCurrentSubnetValidators(networkid ids.ID) map[string]staking_data {
-	log.Info(fmt.Sprintf("TimestampVM: GetCurrentSubnetValidators: %v", networkid))
+	log.Debug(fmt.Sprintf("Rewardmgr: GetCurrentSubnetValidators: %v", networkid))
 
-	pclient := platformvm.NewClient(localRpcUri, time.Minute)
-	currentValidators, err := pclient.GetCurrentValidators(networkid)
+	pclient := platformvm.NewClient(m.config.LocalRpcUri, time.Minute)
+	nodeIDs := []ids.ShortID{}
+	currentValidators, err := pclient.GetCurrentValidators(networkid, nodeIDs)
 	if err != nil {
-		log.Error(fmt.Sprintf("TimestampVM: Error in GetCurrentSubnetValidators: %v", err))
+		log.Error(fmt.Sprintf("Rewardmgr: Error in GetCurrentSubnetValidators: %v", err))
 		return nil
 	}
 
@@ -251,7 +260,7 @@ func (m *RewardMgr) GetCurrentSubnetValidators(networkid ids.ID) map[string]stak
 			return nil
 		}
 
-		log.Info(fmt.Sprintf("NodeID:%s", validator.NodeID))
+		log.Debug(fmt.Sprintf("Rewardmgr: CurrentSubnetValidators NodeID:%s", validator.NodeID))
 
 		sd := staking_data{node_id: validator.NodeID}
 		validating_nodes[validator.NodeID] = sd
@@ -261,40 +270,36 @@ func (m *RewardMgr) GetCurrentSubnetValidators(networkid ids.ID) map[string]stak
 }
 
 //
-func (m *RewardMgr) SendAVAX(rewardAddress string) {
-	log.Info("TimestampVM: SendAVAX")
-
-	avmclient := avm.NewClient(localRpcUri, "X", time.Minute)
-	user := api.UserPass{Username: m.config.RewardeeUser, Password: m.config.RewardeePassword}
-	from := []string{m.config.RewardeeAddress}
-	to := rewardAddress
-	sendTx, err := avmclient.Send(user, from, from[0], 10, "AVAX", to, "hello")
-	if err != nil {
-		log.Error(fmt.Sprintf("TimestampVM: Error in SendAVAX: %v", err))
-		return
-	}
-	log.Info(fmt.Sprintf("TimestampVM: SendAVAX Tx: %s", sendTx.String()))
-}
-
-//
 func (m *RewardMgr) SendRewards(rewardAddress string, rewardAmount uint64) {
-	log.Info("TimestampVM: SendRewards")
 
-	avmclient := avm.NewClient(localRpcUri, "X", time.Minute)
-	user := api.UserPass{Username: m.config.RewardeeUser, Password: m.config.RewardeePassword}
-	from := []string{m.config.RewardeeAddress}
+	avmclient := avm.NewClient(m.config.LocalRpcUri, "X", time.Minute)
+	user := api.UserPass{Username: m.config.RewarderUser, Password: m.config.RewarderPassword}
+	from := []string{m.config.RewarderAddress}
 	to := rewardAddress
 	amt := rewardAmount
 	assetID := m.config.RewardTokenID //RWD - RewardToken
+	if m.config.RewardAsset == "custom" {
+	   assetID = m.config.RewardTokenID //RWD - RewardToken
+	} else if m.config.RewardAsset == "avax" {
+           assetID = m.vm.ctx.AVAXAssetID.String()    // alternative = "AVAX"
+	}
+
 	sendTx, err := avmclient.Send(user, from, from[0], amt, assetID, to, "hello")
 	if err != nil {
-		log.Error(fmt.Sprintf("TimestampVM: Error in SendRewards: %v", err))
+		log.Error(fmt.Sprintf("Rewardmgr: Error in SendRewards: %v", err))
 		return
+	} else {
+		log.Debug(fmt.Sprintf("Rewardmgr: SendRewards AssetID: %s ToAddress : %s  Tx: %s", assetID, to, sendTx.String()))
 	}
-	log.Info(fmt.Sprintf("TimestampVM: SendRewards Tx: %s", sendTx.String()))
 }
 
 //
 func (m *RewardMgr) CalculateReward() uint64 {
-	return 2
+        rewardAmount := uint64(0)
+	if m.config.EnableReward {
+	   rewardAmount = m.config.RewardValue
+	}
+
+	log.Debug(fmt.Sprintf("Rewardmgr: Reward Amount : %d", rewardAmount))
+	return rewardAmount
 }

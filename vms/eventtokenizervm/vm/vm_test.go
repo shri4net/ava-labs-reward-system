@@ -24,8 +24,8 @@ func assertBlock(block *Block, parentID ids.ID, expectedData []byte, passesVerif
 	if block.Parent() != parentID {
 		return fmt.Errorf("expect parent ID to be %s but was %s", parentID, block.Parent())
 	}
-	if len(block.EncEventData) != len(expectedData) {
-		return fmt.Errorf("expected data to be %v but was %v", expectedData, block.EncEventData)
+	if len(block.EncodedData) != len(expectedData) {
+		return fmt.Errorf("expected data to be %v but was %v", expectedData, block.EncodedData)
 	}
 	if block.Verify() != nil && passesVerify {
 		return fmt.Errorf("expected block to pass verification but it fails")
@@ -45,7 +45,7 @@ func TestGenesis(t *testing.T) {
 	ctx := snow.DefaultContextTest()
 	ctx.ChainID = blockchainID
 
-	if err := vm.Initialize(ctx, dbManager, []byte{0, 0, 0, 0, 0}, nil, nil, msgChan, nil); err != nil {
+	if err := vm.Initialize(ctx, dbManager, []byte{0, 0, 0, 0, 0}, nil, nil, msgChan, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +87,7 @@ func TestHappyPath(t *testing.T) {
 	vm := &VM{}
 	ctx := snow.DefaultContextTest()
 	ctx.ChainID = blockchainID
-	if err := vm.Initialize(ctx, dbManager, []byte{0, 0, 0, 0, 0}, nil, nil, msgChan, nil); err != nil {
+	if err := vm.Initialize(ctx, dbManager, []byte{0, 0, 0, 0, 0}, nil, nil, msgChan, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +105,7 @@ func TestHappyPath(t *testing.T) {
 	}
 
 	ctx.Lock.Lock()
-	vm.proposeBlock(BlockData{eventData: []byte{0, 0, 0, 0, 1}}) // propose a value
+	vm.proposeBlock(BlockData{encodedData: []byte{0, 0, 0, 0, 1}}) // propose a value
 	ctx.Lock.Unlock()
 
 	select { // assert there is a pending tx message to the engine
@@ -151,7 +151,7 @@ func TestHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vm.proposeBlock(BlockData{eventData: []byte{0, 0, 0, 0, 2}}) // propose a block
+	vm.proposeBlock(BlockData{encodedData: []byte{0, 0, 0, 0, 2}}) // propose a block
 	ctx.Lock.Unlock()
 
 	select { // verify there is a pending tx message to the engine
@@ -220,7 +220,7 @@ func TestService(t *testing.T) {
 	vm := &VM{}
 	ctx := snow.DefaultContextTest()
 	ctx.ChainID = blockchainID
-	if err := vm.Initialize(ctx, dbManager, []byte{0, 0, 0, 0, 0}, nil, nil, msgChan, nil); err != nil {
+	if err := vm.Initialize(ctx, dbManager, []byte{0, 0, 0, 0, 0}, nil, nil, msgChan, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 

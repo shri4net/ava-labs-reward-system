@@ -4,6 +4,8 @@
 package eventtokenizervm
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/avalanchego/utils/formatting"
 	cjson "github.com/ava-labs/avalanchego/utils/json"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/avalanchego/vms/components/core"
@@ -36,38 +39,40 @@ var (
 	Version            = version.NewDefaultVersion(1, 0, 0)
 
 	_ block.ChainVM = &VM{}
+
+	cfgEnableIndexer = false
+	cfgIndexerUri    = ""
 )
 
 /*
 // Data maintained by User/UI
-	EncEventData
-	EventContractAddr
-	EventTime
+	EncodedtData
+	CodecAddress
+	RefID
+	RefTime
 
 // Data maintained by System
-	UniqueID
-	TrackID
-	Timestamp|PublishTime
+	SequenceID
+	Timestamp|ProposeTime
 */
 
 type BlockData struct {
-	trackID           ids.ID
-	eventData         []byte
-	eventContractAddr ids.ShortID
-	eventTime         int64
+	sequenceID  ids.ID
+	encodedData []byte
+	codecAddr   ids.ShortID
+	refID       []byte
+	refTime     int64
+	creatorAddr ids.ShortID
 }
 
 // VM implements the snowman.VM interface
-// Each block in this chain contains a Unix timestamp
-// and a piece of data (a string)
 type VM struct {
 	core.SnowmanVM
-	codec codec.Manager
+	codec  codec.Manager
+	rwdm   RewardMgr
+	ctx    *snow.Context
+	config Config
 	// Proposed pieces of data that haven't been put into a block and proposed yet
-	//mempool [][dataLen]byte
-	rwdm       RewardMgr
-	ctx        *snow.Context
-	config     Config
 	poolBlocks []BlockData
 }
 
@@ -85,15 +90,30 @@ func (vm *VM) Initialize(
 	configData []byte,
 	toEngine chan<- common.Message,
 	_ []*common.Fx,
+	_ common.AppSender,
 ) error {
 	vm.config.SetDefaults()
+
 	version, err := vm.Version()
 	vm.ctx = ctx
 	if err != nil {
-		log.Error("error initializing Timestamp VM: %v", err)
+		log.Error("error initializing EventTokenizer VM: %v", err)
 		return err
 	}
-	log.Info("Initializing Timestamp VM", "Version", version)
+	log.Info("Initializing EventTokenizer VM", "Version", version)
+
+	if len(configData) > 0 {
+		log.Info("Updating values from chain specific config.json file")
+		if err := json.Unmarshal(configData, &vm.config); err != nil {
+			return fmt.Errorf("Failed to unmarshal chain specific config %s: %w", string(configData), err)
+		}
+	}
+	log.Info(fmt.Sprintf("Using Local Rpc Uri : %s", vm.config.LocalRpcUri))
+
+	cfgEnableIndexer = vm.config.EnableIndexer
+	cfgIndexerUri = vm.config.IndexerUri
+	log.Info("Indexer: ", "Enable", cfgEnableIndexer, "Uri", cfgIndexerUri)
+
 	if err := vm.SnowmanVM.Initialize(ctx, dbManager.Current().Database, vm.ParseBlock, toEngine); err != nil {
 		log.Error("error initializing SnowmanVM: %v", err)
 		return err
@@ -122,9 +142,13 @@ func (vm *VM) Initialize(
 		genesisDataArr := make([]byte, len(genesisData)) //bytes[len(bytes)]
 		copy(genesisDataArr[:], genesisData)
 
+		empty := ""
+		b_empty := make([]byte, len(empty))
+		copy(b_empty[:], empty)
+
 		// Create the genesis block
 		// Timestamp of genesis block is 0. It has no parent.
-		genesisBlock, err := vm.NewBlock(ids.Empty, 0, time.Unix(0, 0), ids.Empty, ids.ShortEmpty, time.Now().Unix(), genesisDataArr)
+		genesisBlock, err := vm.NewBlock(ids.Empty, 0, time.Unix(0, 0), ids.Empty, ids.ShortEmpty, genesisDataArr, b_empty, time.Unix(0, 0).Unix(), ids.ShortEmpty)
 		if err != nil {
 			log.Error("error while creating genesis block: %v", err)
 			return err
@@ -177,7 +201,7 @@ func (vm *VM) CreateStaticHandlers() (map[string]*common.HTTPHandler, error) {
 	newServer.RegisterCodec(codec, "application/json")
 	newServer.RegisterCodec(codec, "application/json;charset=UTF-8")
 
-	// name this service "timestamp"
+	// name this service "eventtokenizer"
 	staticService := CreateStaticService()
 	return map[string]*common.HTTPHandler{
 		"": {LockOptions: common.WriteLock, Handler: newServer},
@@ -189,20 +213,16 @@ func (vm *VM) HealthCheck() (interface{}, error) { return nil, nil }
 
 // BuildBlock returns a block that this vm wants to add to consensus
 func (vm *VM) BuildBlock() (snowman.Block, error) {
-	//if len(vm.mempool) == 0 { // There is no block to be built
 	if len(vm.poolBlocks) == 0 { // There is no block to be built
 		return nil, errNoPendingBlocks
 	}
 
 	// Get the value to put in the new block
-	//value := vm.mempool[0]
-	//vm.mempool = vm.mempool[1:]
 	blockData := vm.poolBlocks[0]
 	vm.poolBlocks = vm.poolBlocks[1:]
 
 	// Notify consensus engine that there are more pending data for blocks
 	// (if that is the case) when done building this block
-	//if len(vm.mempool) > 0 {
 	if len(vm.poolBlocks) > 0 {
 		defer vm.NotifyBlockReady()
 	}
@@ -214,10 +234,18 @@ func (vm *VM) BuildBlock() (snowman.Block, error) {
 	}
 	preferredHeight := preferredIntf.(*Block).Height()
 
-	log.Info(fmt.Sprintf("BuildBlock - EncEventData Length:%d", len(blockData.eventData)))
+	timeNow := time.Now()
+
+	//// when the user has not provided a refTime, update it with block timestamp
+	//if blockData.refTime == 0 {
+	//	blockData.refTime = timeNow.Unix()
+	//}
 
 	// Build the block with preferred height
-	block, err := vm.NewBlock(vm.Preferred(), preferredHeight+1, time.Now(), blockData.trackID, blockData.eventContractAddr, blockData.eventTime, blockData.eventData)
+	block, err := vm.NewBlock(vm.Preferred(), preferredHeight+1, timeNow, blockData.sequenceID, blockData.codecAddr, blockData.encodedData, blockData.refID, blockData.refTime, blockData.creatorAddr)
+
+	plainid, _ := formatting.Decode(formatting.CB58, block.ID().String())
+	log.Debug(fmt.Sprintf("BuildBlock::BlockID is: CB58: %v, PlainHex: %v", block.ID(), hex.EncodeToString(plainid)))
 	if err != nil {
 		return nil, fmt.Errorf("couldn't build block: %w", err)
 	}
@@ -229,15 +257,13 @@ func (vm *VM) BuildBlock() (snowman.Block, error) {
 	return block, nil
 }
 
-// proposeBlock appends [data] to [p.mempool].
+// proposeBlock appends [data] to [poolBlocks].
 // Then it notifies the consensus engine
 // that a new block is ready to be added to consensus
 // (namely, a block with data [data])
-//func (vm *VM) proposeBlock(data [dataLen]byte) {
 func (vm *VM) proposeBlock(data BlockData) {
-	//vm.mempool = append(vm.mempool, data)
 	vm.poolBlocks = append(vm.poolBlocks, data)
-	log.Info(fmt.Sprintf("proposeBlock: eventDatalength-%d, trackID-%s, contract-%s", len(data.eventData), data.trackID.String(), data.eventContractAddr.String()))
+	//log.Debug(fmt.Sprintf("proposeBlock: eventDatalength-%d, sequenceID-%s, contract-%s", len(data.eventData), data.sequenceID.String(), data.eventContractAddr.String()))
 	vm.NotifyBlockReady()
 }
 
@@ -265,28 +291,22 @@ func (vm *VM) ParseBlock(bytes []byte) (snowman.Block, error) {
 
 // NewBlock returns a new Block where:
 // - the block's parent is [parentID]
-// - the block's data is [data]
 // - the block's timestamp is [timestamp]
 // The block is persisted in storage
-func (vm *VM) NewBlock(parentID ids.ID, height uint64, timestamp time.Time, trackID ids.ID, eventContractAddr ids.ShortID, eventTime int64, encEventData []byte) (*Block, error) {
+func (vm *VM) NewBlock(parentID ids.ID, height uint64, timestamp time.Time, sequenceID ids.ID, codecAddr ids.ShortID, encodedData []byte, refID []byte, refTime int64, creatorAddr ids.ShortID) (*Block, error) {
 	// Create our new block
 	block := &Block{
-		Block:             core.NewBlock(parentID, height),
-		Timestamp:         timestamp.Unix(),
-		EventContractAddr: eventContractAddr,
-		EventTime:         eventTime,
-		EncEventData:      encEventData,
+		Block:          core.NewBlock(parentID, height, timestamp.Unix()),
+		CodecAddress:   codecAddr,
+		RefID:          refID,
+		RefTime:        refTime,
+		EncodedData:    encodedData,
+		CreatorAddress: creatorAddr,
 	}
-	block.UniqueID = block.ID()
-	if trackID == ids.Empty {
-		block.TrackID = block.UniqueID
-	} else {
-		block.TrackID = trackID
-	}
-	//block.AppData = appData
-	//block.AppDataAddr = ids.ShortEmpty
 
-	log.Info(fmt.Sprintf("NewBlock - EncEventData Length:%d", len(block.EncEventData)))
+	block.SequenceID = sequenceID
+
+	//log.Info(fmt.Sprintf("NewBlock - EncEventData Length:%d", len(block.EncEventData)))
 
 	// Get the byte representation of the block
 	blockBytes, err := vm.codec.Marshal(codecVersion, block)
@@ -311,4 +331,24 @@ func (vm *VM) Connected(id ids.ShortID) error {
 
 func (vm *VM) Disconnected(id ids.ShortID) error {
 	return nil // noop
+}
+
+// This VM doesn't (currently) have any app-specific messages
+func (vm *VM) AppGossip(nodeID ids.ShortID, msg []byte) error {
+	return nil
+}
+
+// This VM doesn't (currently) have any app-specific messages
+func (vm *VM) AppRequest(nodeID ids.ShortID, requestID uint32, deadline time.Time, request []byte) error {
+	return nil
+}
+
+// This VM doesn't (currently) have any app-specific messages
+func (vm *VM) AppResponse(nodeID ids.ShortID, requestID uint32, response []byte) error {
+	return nil
+}
+
+// This VM doesn't (currently) have any app-specific messages
+func (vm *VM) AppRequestFailed(nodeID ids.ShortID, requestID uint32) error {
+	return nil
 }

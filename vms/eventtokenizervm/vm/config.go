@@ -3,35 +3,51 @@ package eventtokenizervm
 import "time"
 
 const (
-	defaultSubnetIDStr      = "ER1mFqjFxQiCb12QFjAfVfAmTTua3xAaA9MKXSDjio796eRfG"
-	defaultNodeID           = "NodeID-CQpNw9vWvqNbX8xPXnRufZkyHkpvkYHtm"
-	defaultRewardeeUser     = "username"
-	defaultRewardeePassword = "password"
-	defaultRewardeeAddress  = "X-fuji1ugtsmdwrsgcw3n7mlkvxanayeyzyef0hakd2hy"
+	defaultMasterNodeID     = "NodeID-CQpNw9vWvqNbX8xPXnRufZkyHkpvkYHtm"
+	defaultRewarderUser     = "username"
+	defaultRewarderPassword = "password"
+	defaultRewarderAddress  = "X-fuji1ugtsmdwrsgcw3n7mlkvxanayeyzyef0hakd2hy"
 	defaultRewardTokenID    = "NPHxwugngk9Ru3biuvcZGBZvwcZo5FzMCggawXhtVoX8fRokH"
-	defaultEnableReward     = true
-	defaultPollingDuration  = 1 * time.Hour
+	defaultPollingDuration  = 24 * time.Hour
+
+	defaultEnableIndexer = false
+	defaultIndexerUri    = "http://localhost:3001/api/source/newevent"
+
+	defaultlocalRpcUri = "http://localhost:9650"
+
+	defaultEnableReward = true
+	defaultRewardValue  = 1
 )
 
 // Config ...
 type Config struct {
-	MasterNodeID     string `json:"master-node-id"`
-	SubnetIDStr      string `json:"subnet-id-str"`
-	RewardeeUser     string
-	RewardeePassword string
-	RewardeeAddress  string
+	MasterNodeID     string
+	RewarderUser     string
+	RewarderPassword string
+	RewarderAddress  string
 	RewardTokenID    string
-	EnableReward     bool
 	PollingDuration  time.Duration
+	EnableIndexer    bool
+	IndexerUri       string
+	LocalRpcUri      string
+	EnableReward     bool
+	RewardValue      uint64
+	RewardDisbursal  string
+	RewardAsset      string
 }
 
 func (c *Config) SetDefaults() {
-	c.SubnetIDStr = defaultSubnetIDStr
-	c.MasterNodeID = defaultNodeID
-	c.RewardeeUser = defaultRewardeeUser
-	c.RewardeePassword = defaultRewardeePassword
-	c.RewardeeAddress = defaultRewardeeAddress
+	c.MasterNodeID = defaultMasterNodeID
+	c.RewarderUser = defaultRewarderUser
+	c.RewarderPassword = defaultRewarderPassword
+	c.RewarderAddress = defaultRewarderAddress
 	c.RewardTokenID = defaultRewardTokenID
 	c.EnableReward = defaultEnableReward
 	c.PollingDuration = defaultPollingDuration
+	c.EnableIndexer = defaultEnableIndexer
+	c.IndexerUri = defaultIndexerUri
+	c.LocalRpcUri = defaultlocalRpcUri
+	c.RewardValue = defaultRewardValue
+	c.RewardDisbursal = "periodic" // periodic | end
+	c.RewardAsset = "custom"       // custom | avax
 }

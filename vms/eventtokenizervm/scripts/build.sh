@@ -21,11 +21,11 @@ elif [[ $# -eq 2 ]]; then
     binary_directory=$1
     name=$2
 elif [[ $# -ne 0 ]]; then
-    echo "Invalid arguments to build timestampvm. Requires either no arguments (default) or one arguments to specify binary location."
+    echo "Invalid arguments to build eventtokenizervm. Requires either no arguments (default) or one arguments to specify binary location."
     exit 1
 fi
 
 
 # Build timestampvm, which is run as a subprocess
-echo "Building timestampvm in $binary_directory/$name"
+echo "Building eventtokenizervm in $binary_directory/$name"
 go build -o "$binary_directory/$name" "main/"*.go
