@@ -9,7 +9,7 @@ const provider = new Web3.providers.HttpProvider(
 );
 
 const privateKeys = [
-  "fuji-privatekey",
+  "fuji-c-chain-private-key",
 ];
 
 module.exports = {
