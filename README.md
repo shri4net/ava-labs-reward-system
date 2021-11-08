@@ -1,4 +1,4 @@
-# EventTokenizerVM
+# EventTokenizer & RewardManager
 
 This repository contains code for the Hackathon event sponsored by Ava-labs under the "Subnet and Virtual Machine" Track
 
@@ -8,13 +8,24 @@ The repo consists of
 3. Sample UI code for interacting with the VM & C Blockchain (Tracker UI)  
 4. Event Indexer  
 
-### Presentation link regarding the concept
-https://youtu.be/LSr8BzuY0eU
+### Presentation links
+[Concept](https://youtu.be/LSr8BzuY0eU)  
+[Tracker UI walkthrough](https://youtu.be/zbNHBFeU-tA)  
+
+
+### Sample Shipment Tracker UI
+https://apps4demo.com/trackerui
+
 
 ### Design documentations
 1. [Eventtokenizer design document](https://github.com/shri4net/ava-labs-reward-system/blob/main/eventtokenizer-design-document.pdf)  
 2. [Reward design document](https://github.com/shri4net/ava-labs-reward-system/blob/main/reward-design-document.pdf)  
 
+
+### Diagram
+![Architecture](/arch-diagram.jpeg)
+
+## Deployments
 ### The code is deployed on the Fuji network of Ava-labs, with below details
 
 ```bash
@@ -38,3 +49,4 @@ The contract on C-chain is hosted in below address
 0xD0F100f59080C1F4D5706a1FCc98d5AEB73fe94C
 ```
 https://cchain.explorer.avax-test.network/address/0xD0F100f59080C1F4D5706a1FCc98d5AEB73fe94C/contracts
+
